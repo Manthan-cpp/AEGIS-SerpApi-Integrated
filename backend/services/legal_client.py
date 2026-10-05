@@ -137,6 +137,8 @@ def _prioritize_relevant_chunks(query: str, chunks: list[LegalChunk]) -> list[Le
     rape_query = bool(re.search(r"\b(?:rape|raped)\b", normalized))
 
     def priority(chunk: LegalChunk) -> int:
+        if chunk.chunk_id.startswith("serpapi-web"):
+            return 99
         title = chunk.title.casefold()
         number = _section_number(chunk)
         if kidnapping_query:

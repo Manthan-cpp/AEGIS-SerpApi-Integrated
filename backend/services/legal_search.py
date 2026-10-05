@@ -13,6 +13,14 @@ from typing import Any
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
+from services.serpapi_client import (
+    is_legal_web_candidate,
+    legal_web_results_to_chunks,
+    search_legal_web,
+    serpapi_enabled,
+)
+
+
 
 MODEL_NAME = os.getenv("LEGAL_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 LEGAL_COLLECTION = "legal_corpus_chunks"
@@ -501,7 +509,7 @@ def _merge_local_grounding(query: str, atlas_chunks: list[LegalChunk], limit: in
     return combined[:limit]
 
 
-def search_legal_chunks(query: str, limit: int = 5) -> tuple[list[LegalChunk], str]:
+def _base_search_legal_chunks(query: str, limit: int = 5) -> tuple[list[LegalChunk], str]:
     """Search Atlas first, then the checked-in official corpus if needed."""
 
     # For high-stakes violence questions, prefer the checked-in official corpus.
@@ -574,6 +582,34 @@ def search_legal_chunks(query: str, limit: int = 5) -> tuple[list[LegalChunk], s
             reverse=True,
         )
         return [_as_chunk(document, score) for score, document in ranked[:limit]], "local-cosine"
+
+
+def search_legal_chunks(query: str, limit: int = 5) -> tuple[list[LegalChunk], str]:
+    """Search Atlas and official corpus, augmented with SerpAPI live web grounding."""
+    web_candidate = is_legal_web_candidate(query)
+    web_chunks: list[LegalChunk] = []
+    if web_candidate and serpapi_enabled():
+        web_results = search_legal_web(query, max_results=3)
+        web_chunks = legal_web_results_to_chunks(web_results)
+
+    base_chunks, source = _base_search_legal_chunks(query, limit)
+
+    if web_chunks:
+        combined = list(web_chunks)
+        existing_sections = {c.section.casefold() for c in web_chunks}
+        for chunk in base_chunks:
+            if chunk.section.casefold() not in existing_sections:
+                combined.append(chunk)
+        return combined[:limit], "serpapi-web"
+
+    # If base retrieval found no relevant provisions, try SerpAPI web retrieval as a live fallback
+    if serpapi_enabled() and not any(chunk_is_relevant(c) for c in base_chunks):
+        fallback_results = search_legal_web(query, max_results=limit)
+        fallback_chunks = legal_web_results_to_chunks(fallback_results)
+        if fallback_chunks:
+            return fallback_chunks, "serpapi-web"
+
+    return base_chunks, source
 
 
 def chunk_is_relevant(chunk: LegalChunk | None, threshold: float = 0.38) -> bool:
