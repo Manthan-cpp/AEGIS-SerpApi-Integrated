@@ -200,6 +200,70 @@ class SerpApiClientTests(unittest.TestCase):
             self.assertIn("https://wcd.nic.in/sakhi-pune", reply.text)
             self.assertIn("181", reply.text)
 
+    def test_is_health_facility_candidate(self):
+        from services.serpapi_client import is_health_facility_candidate
+
+        self.assertTrue(is_health_facility_candidate("Where is the nearest Jan Aushadhi Kendra in Pune?"))
+        self.assertTrue(is_health_facility_candidate("Can I get an emergency contraceptive pill at a PHC?"))
+        self.assertTrue(is_health_facility_candidate("Where is an ICTC centre for STI testing in Lucknow?"))
+        self.assertTrue(is_health_facility_candidate("Where can I find a government hospital or CHC in Delhi?"))
+
+        self.assertFalse(is_health_facility_candidate("Why is my period late?"))
+        self.assertFalse(is_health_facility_candidate("Is masturbation normal?"))
+
+    def test_formulate_health_search_query(self):
+        from services.serpapi_client import formulate_health_search_query
+
+        query1 = formulate_health_search_query("Where is Jan Aushadhi Kendra in Pune?")
+        self.assertIn("PMBJK", query1)
+        self.assertIn("Pune", query1)
+
+        query2 = formulate_health_search_query("Where can I get an ICTC centre for STI testing in Delhi?")
+        self.assertIn("ICTC", query2)
+        self.assertIn("NACO", query2)
+        self.assertIn("Delhi", query2)
+
+    @patch("services.serpapi_client._fetch_from_serpapi")
+    def test_search_health_facility_web_mock(self, mock_fetch):
+        from services.serpapi_client import search_health_facility_web
+
+        mock_fetch.return_value = [
+            SerpWebResult(
+                title="Jan Aushadhi Kendra Locator Pune",
+                link="https://janaushadhi.gov.in/locate-pune",
+                snippet="Official Pradhan Mantri Bhartiya Janaushadhi store locator in Pune.",
+                source_name="janaushadhi.gov.in",
+            )
+        ]
+        with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}, clear=False):
+            results = search_health_facility_web("Where is Jan Aushadhi in Pune?", max_results=1)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].title, "Jan Aushadhi Kendra Locator Pune")
+            self.assertEqual(results[0].source_name, "janaushadhi.gov.in")
+
+    @patch("services.health_client.search_health_facility_web")
+    @patch("services.health_client.serpapi_enabled", return_value=True)
+    def test_health_reply_with_facility_grounding(self, _mock_enabled, mock_web):
+        from services.health_client import generate_health_reply
+
+        mock_web.return_value = [
+            SerpWebResult(
+                title="Jan Aushadhi Kendra Pune",
+                link="https://janaushadhi.gov.in/locate-pune",
+                snippet="Affordable medicines and sanitary pads.",
+                source_name="janaushadhi.gov.in",
+            )
+        ]
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GROQ_API_KEY": ""}, clear=False), patch(
+            "services.health_client.generate_gemini_text"
+        ) as gemini_mock:
+            gemini_mock.return_value = "You can purchase affordable sanitary pads at Jan Aushadhi Kendras across Pune."
+            reply = generate_health_reply("Where can I find affordable sanitary napkins in Pune?", [])
+            self.assertEqual(reply.source, "gemini")
+            self.assertIn("Jan Aushadhi", reply.text)
+            call_prompt = gemini_mock.call_args.kwargs["prompt"]
+            self.assertIn("janaushadhi.gov.in", call_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

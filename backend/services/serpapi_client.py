@@ -407,3 +407,90 @@ def format_crisis_support_context(results: list[SerpWebResult]) -> str:
         lines.append(f"- Resource {index}: {res.title} ({res.source_name}) — {res.snippet} [Link: {res.link}]")
     return "\n".join(lines)
 
+
+HEALTH_FACILITY_PATTERNS = [
+    r"\b(?:phc|chc|primary\s+health\s+cent(?:er|re)|community\s+health\s+cent(?:er|re))\b",
+    r"\b(?:jan\s+aushadhi|pmbjk|janaushadhi|generic\s+medicines?|suvidha\s+pad)\b",
+    r"\b(?:sanitary\s+(?:pads?|napkins?)|menstrual\s+(?:cups?|pads?))\b",
+    r"\b(?:emergency\s+contracepti\w*|i[- ]?pill|morning\s+after\s+pill|72\s+hours?\s+pill|unwanted[- ]?72)\b",
+    r"\b(?:sti\s+clinic|std\s+clinic|ictc\s+cent(?:er|re)|naco|hiv\s+test(?:ing)?\s+cent(?:er|re))\b",
+    r"\b(?:government\s+hospital|district\s+hospital|civil\s+hospital|maternity\s+cent(?:er|re)|reproductive\s+health\s+clinic)\b",
+    r"\b(?:nearest\s+hospital|nearest\s+clinic|where\s+can\s+i\s+(?:buy|find|get)|where\s+to\s+(?:buy|find|get)|where\s+to\s+get\s+tested)\b",
+]
+
+
+def is_health_facility_candidate(query: str) -> bool:
+    """Determine whether a health question asks about facilities, PHCs, generic stores, or clinics."""
+    lowered = query.casefold()
+    return any(re.search(pat, lowered) for pat in HEALTH_FACILITY_PATTERNS)
+
+
+def formulate_health_search_query(query: str) -> str:
+    """Formulate a targeted, privacy-preserving search query for public health facilities."""
+    sanitized = sanitize_query(query)
+    lowered = sanitized.casefold()
+    found_locations = [loc for loc in INDIAN_LOCATIONS if re.search(rf"\b{re.escape(loc)}\b", lowered)]
+    loc_str = " ".join(found_locations[:2]).title() if found_locations else ""
+
+    sanitary = bool(re.search(r"\b(?:sanitary|pads?|napkins?|menstrual)\b", lowered))
+    jan_aushadhi = bool(re.search(r"\b(?:jan\s+aushadhi|pmbjk|janaushadhi|suvidha|generic)\b", lowered)) or sanitary
+    sti_hiv = bool(re.search(r"\b(?:sti|std|ictc|naco|hiv)\b", lowered))
+    ecp = bool(re.search(r"\b(?:emergency\s+contracept|i[- ]?pill|morning\s+after|72\s+hour|unwanted)\b", lowered))
+
+    if jan_aushadhi and loc_str:
+        return f"Pradhan Mantri Bhartiya Janaushadhi Kendra PMBJK {loc_str} official store locator"
+    if jan_aushadhi:
+        return "Pradhan Mantri Bhartiya Janaushadhi Pariyojana official store locator India"
+    if sti_hiv and loc_str:
+        return f"ICTC NACO HIV STI government testing centre {loc_str} official India"
+    if sti_hiv:
+        return "ICTC NACO HIV STI government testing centre official India"
+    if ecp and loc_str:
+        return f"emergency contraceptive pill availability PHC government hospital {loc_str} official India"
+    if ecp:
+        return "emergency contraceptive pill guidelines National Health Mission NHM India official"
+    if loc_str:
+        return f"Primary Health Centre PHC CHC government hospital {loc_str} official NHM India"
+    return "Primary Health Centre Community Health Centre official portal NHM India"
+
+
+def search_health_facility_web(query: str, max_results: int = 2) -> list[SerpWebResult]:
+    """Search Google via SerpAPI for authentic Indian health facilities, Jan Aushadhi Kendras, or PHCs."""
+    if not serpapi_enabled():
+        return []
+
+    search_query = formulate_health_search_query(query)
+    if not search_query.strip():
+        return []
+
+    cache_key = f"health:{search_query.casefold()}"
+    now = time.time()
+
+    with _CACHE_LOCK:
+        if cache_key in _CACHE:
+            cached_time, cached_results = _CACHE[cache_key]
+            if now - cached_time < CACHE_TTL_SECONDS:
+                return cached_results
+
+    results = _fetch_from_serpapi(search_query, max_results=max_results)
+
+    with _CACHE_LOCK:
+        if len(_CACHE) > 500:
+            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t > CACHE_TTL_SECONDS]
+            for k in expired_keys:
+                _CACHE.pop(k, None)
+        _CACHE[cache_key] = (now, results)
+
+    return results
+
+
+def format_health_facility_context(results: list[SerpWebResult]) -> str:
+    """Format health facility results for model context."""
+    if not results:
+        return ""
+    lines = []
+    for index, res in enumerate(results, start=1):
+        lines.append(f"- Facility {index}: {res.title} ({res.source_name}) — {res.snippet} [Portal: {res.link}]")
+    return "\n".join(lines)
+
+
