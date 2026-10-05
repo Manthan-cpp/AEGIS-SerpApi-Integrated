@@ -328,3 +328,82 @@ def legal_web_results_to_chunks(results: list[SerpWebResult]) -> list[LegalChunk
             )
         )
     return chunks
+
+
+CRISIS_PATTERNS = [
+    r"\b(?:shelter\s+home|safe\s+house|safe\s+haven|women\s+shelter|night\s+shelter|short\s+stay\s+home|swadhar\s+greh|ujjawala)\b",
+    r"\b(?:sakhi\s+(?:cent(?:er|re)|osc)|one\s+stop\s+cent(?:er|re)|distress\s+cent(?:er|re))\b",
+    r"\b(?:tele[- ]?manas|kiran\s+helpline|mental\s+health\s+helpline|suicide\s+prevention\s+helpline|counselling\s+helpline|vandrevala)\b",
+    r"\b(?:kicked\s+out|thrown\s+out|nowhere\s+to\s+go|no\s+place\s+to\s+stay|need\s+a\s+place\s+to\s+stay|where\s+can\s+i\s+go\s+tonight)\b",
+    r"\b(?:safe\s+place\s+to\s+stay|emergency\s+shelter|safe\s+accommodation)\b",
+]
+
+
+def is_crisis_support_candidate(query: str) -> bool:
+    """Determine whether a companion message asks for safe havens, shelters, or crisis helplines."""
+    lowered = query.casefold()
+    return any(re.search(pat, lowered) for pat in CRISIS_PATTERNS)
+
+
+def formulate_crisis_search_query(query: str) -> str:
+    """Formulate a targeted, privacy-preserving search query for crisis support / shelters."""
+    sanitized = sanitize_query(query)
+    lowered = sanitized.casefold()
+    found_locations = [loc for loc in INDIAN_LOCATIONS if re.search(rf"\b{re.escape(loc)}\b", lowered)]
+    loc_str = " ".join(found_locations[:2]).title() if found_locations else ""
+
+    mental_health = bool(re.search(r"\b(?:mental\s+health|suicid|counsel|depress|anxiety|tele[- ]?manas|kiran|vandrevala)\b", lowered))
+    shelter = bool(re.search(r"\b(?:shelter|stay|kicked\s+out|thrown\s+out|safe\s+place|haven|sakhi|one\s+stop)\b", lowered))
+
+    if mental_health and loc_str:
+        return f"Tele-MANAS mental health crisis counselling helpline {loc_str} official 14416"
+    if mental_health:
+        return "Tele-MANAS mental health crisis counselling helpline India official 14416"
+    if shelter and loc_str:
+        return f"Sakhi One Stop Centre women shelter home {loc_str} official contact India"
+    if shelter:
+        return "Sakhi One Stop Centre Swadhar Greh women shelter official helpline India"
+    if loc_str:
+        return f"Women crisis shelter helpline {loc_str} official India"
+    return "Women crisis shelter helpline Sakhi One Stop Centre official India"
+
+
+def search_crisis_support_web(query: str, max_results: int = 2) -> list[SerpWebResult]:
+    """Search Google via SerpAPI for authentic crisis safe havens, shelters, or helplines."""
+    if not serpapi_enabled():
+        return []
+
+    search_query = formulate_crisis_search_query(query)
+    if not search_query.strip():
+        return []
+
+    cache_key = f"crisis:{search_query.casefold()}"
+    now = time.time()
+
+    with _CACHE_LOCK:
+        if cache_key in _CACHE:
+            cached_time, cached_results = _CACHE[cache_key]
+            if now - cached_time < CACHE_TTL_SECONDS:
+                return cached_results
+
+    results = _fetch_from_serpapi(search_query, max_results=max_results)
+
+    with _CACHE_LOCK:
+        if len(_CACHE) > 500:
+            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t > CACHE_TTL_SECONDS]
+            for k in expired_keys:
+                _CACHE.pop(k, None)
+        _CACHE[cache_key] = (now, results)
+
+    return results
+
+
+def format_crisis_support_context(results: list[SerpWebResult]) -> str:
+    """Format crisis support results for model context."""
+    if not results:
+        return ""
+    lines = []
+    for index, res in enumerate(results, start=1):
+        lines.append(f"- Resource {index}: {res.title} ({res.source_name}) — {res.snippet} [Link: {res.link}]")
+    return "\n".join(lines)
+

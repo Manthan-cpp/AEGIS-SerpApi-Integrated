@@ -136,6 +136,70 @@ class SerpApiClientTests(unittest.TestCase):
         self.assertEqual(data["citations"][0]["source_url"], "https://pune.dcourts.gov.in/dlsa")
         self.assertIn("[Source 1]", data["answer"])
 
+    def test_is_crisis_support_candidate(self):
+        from services.serpapi_client import is_crisis_support_candidate
+
+        self.assertTrue(is_crisis_support_candidate("Where is the nearest women shelter in Pune?"))
+        self.assertTrue(is_crisis_support_candidate("I was kicked out of my house, where can I go tonight?"))
+        self.assertTrue(is_crisis_support_candidate("How to contact Sakhi One Stop Centre in Lucknow?"))
+        self.assertTrue(is_crisis_support_candidate("Is there a Tele-MANAS helpline for mental health?"))
+
+        self.assertFalse(is_crisis_support_candidate("I am feeling lonely today"))
+        self.assertFalse(is_crisis_support_candidate("Can you talk to me like a friend?"))
+
+    def test_formulate_crisis_search_query(self):
+        from services.serpapi_client import formulate_crisis_search_query
+
+        query1 = formulate_crisis_search_query("Where is a safe shelter home in Pune?")
+        self.assertIn("Sakhi One Stop Centre", query1)
+        self.assertIn("Pune", query1)
+
+        query2 = formulate_crisis_search_query("I feel overwhelmed and need mental health crisis counselling")
+        self.assertIn("Tele-MANAS", query2)
+        self.assertIn("14416", query2)
+
+    @patch("services.serpapi_client._fetch_from_serpapi")
+    def test_search_crisis_support_web_mock(self, mock_fetch):
+        from services.serpapi_client import search_crisis_support_web
+
+        mock_fetch.return_value = [
+            SerpWebResult(
+                title="Sakhi One Stop Centre Pune",
+                link="https://wcd.nic.in/sakhi-pune",
+                snippet="24/7 shelter, medical aid, and crisis assistance for women.",
+                source_name="wcd.nic.in",
+            )
+        ]
+        with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}, clear=False):
+            results = search_crisis_support_web("Where is Sakhi centre in Pune?", max_results=1)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].title, "Sakhi One Stop Centre Pune")
+            self.assertEqual(results[0].source_name, "wcd.nic.in")
+
+    @patch("services.companion_client.search_crisis_support_web")
+    @patch("services.companion_client.serpapi_enabled", return_value=True)
+    def test_companion_offline_fallback_with_crisis_support(self, _mock_enabled, mock_web):
+        from services.companion_client import generate_companion_reply
+
+        mock_web.return_value = [
+            SerpWebResult(
+                title="Sakhi One Stop Centre Pune",
+                link="https://wcd.nic.in/sakhi-pune",
+                snippet="24/7 emergency shelter and relief in Pune.",
+                source_name="wcd.nic.in",
+            )
+        ]
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "", "GROQ_API_KEY": "", "OLLAMA_ENABLED": "false"}, clear=False):
+            reply = generate_companion_reply(
+                "I need a safe place to stay tonight in Pune, where can I go?",
+                [],
+                "normal",
+            )
+            self.assertEqual(reply.source, "local-fallback")
+            self.assertIn("Sakhi One Stop Centre Pune", reply.text)
+            self.assertIn("https://wcd.nic.in/sakhi-pune", reply.text)
+            self.assertIn("181", reply.text)
+
 
 if __name__ == "__main__":
     unittest.main()
