@@ -69,6 +69,15 @@ class SerpWebResult:
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[str, tuple[float, list[SerpWebResult]]] = {}
+MAX_CACHE_ENTRIES = 500
+
+# Circuit breaker state
+_CIRCUIT_LOCK = threading.RLock()
+_CONSECUTIVE_FAILURES: int = 0
+_CIRCUIT_BREAKER_OPEN: bool = False
+_CIRCUIT_RESET_TIME: float = 0.0
+FAILURE_THRESHOLD: int = 3
+CIRCUIT_COOLDOWN_SECONDS: float = 60.0
 
 
 def serpapi_enabled() -> bool:
@@ -76,21 +85,123 @@ def serpapi_enabled() -> bool:
     return bool(os.getenv("SERPAPI_API_KEY", "").strip())
 
 
+def is_circuit_open() -> bool:
+    """Return True if the circuit breaker is currently open (blocking external calls)."""
+    global _CIRCUIT_BREAKER_OPEN, _CIRCUIT_RESET_TIME, _CONSECUTIVE_FAILURES
+    with _CIRCUIT_LOCK:
+        if not _CIRCUIT_BREAKER_OPEN:
+            return False
+        # Cooldown period expired; transition to half-open to probe external service
+        if time.time() >= _CIRCUIT_RESET_TIME:
+            _CIRCUIT_BREAKER_OPEN = False
+            return False
+        return True
+
+
+def record_success() -> None:
+    """Record a successful remote SerpAPI query, resetting failure counters."""
+    global _CONSECUTIVE_FAILURES, _CIRCUIT_BREAKER_OPEN
+    with _CIRCUIT_LOCK:
+        _CONSECUTIVE_FAILURES = 0
+        _CIRCUIT_BREAKER_OPEN = False
+
+
+def record_failure() -> None:
+    """Record a failed remote SerpAPI query; trip open if threshold is reached."""
+    global _CONSECUTIVE_FAILURES, _CIRCUIT_BREAKER_OPEN, _CIRCUIT_RESET_TIME
+    with _CIRCUIT_LOCK:
+        _CONSECUTIVE_FAILURES += 1
+        if _CONSECUTIVE_FAILURES >= FAILURE_THRESHOLD:
+            _CIRCUIT_BREAKER_OPEN = True
+            _CIRCUIT_RESET_TIME = time.time() + CIRCUIT_COOLDOWN_SECONDS
+            logger.warning(
+                "SerpAPI circuit breaker tripped open after %d consecutive failures. Cooling down for %.0fs.",
+                _CONSECUTIVE_FAILURES,
+                CIRCUIT_COOLDOWN_SECONDS,
+            )
+
+
+def reset_circuit_breaker_for_tests() -> None:
+    """Reset circuit breaker counters and state for test harnesses."""
+    global _CONSECUTIVE_FAILURES, _CIRCUIT_BREAKER_OPEN, _CIRCUIT_RESET_TIME
+    with _CIRCUIT_LOCK:
+        _CONSECUTIVE_FAILURES = 0
+        _CIRCUIT_BREAKER_OPEN = False
+        _CIRCUIT_RESET_TIME = 0.0
+
+
+def get_serpapi_status() -> dict[str, Any]:
+    """Return health telemetry for SerpAPI integration."""
+    circuit_status = is_circuit_open()
+    with _CIRCUIT_LOCK:
+        consecutive_fails = _CONSECUTIVE_FAILURES
+    with _CACHE_LOCK:
+        cache_size = len(_CACHE)
+    return {
+        "enabled": serpapi_enabled(),
+        "circuit_open": circuit_status,
+        "consecutive_failures": consecutive_fails,
+        "cached_entries": cache_size,
+    }
+
+
+def _cache_get(key: str) -> list[SerpWebResult] | None:
+    """Retrieve unexpired results from the in-memory cache."""
+    now = time.time()
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            cached_time, cached_results = _CACHE[key]
+            if now - cached_time < CACHE_TTL_SECONDS:
+                return cached_results
+    return None
+
+
+def _cache_put(key: str, results: list[SerpWebResult]) -> None:
+    """Store results in memory cache with bounded eviction."""
+    now = time.time()
+    with _CACHE_LOCK:
+        if len(_CACHE) >= MAX_CACHE_ENTRIES:
+            # First purge expired entries
+            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t >= CACHE_TTL_SECONDS]
+            for k in expired_keys:
+                _CACHE.pop(k, None)
+            # If still over or at capacity, prune the oldest entries
+            if len(_CACHE) >= MAX_CACHE_ENTRIES:
+                sorted_keys = sorted(_CACHE.keys(), key=lambda k: _CACHE[k][0])
+                for k in sorted_keys[:100]:
+                    _CACHE.pop(k, None)
+        _CACHE[key] = (now, results)
+
+
+def clear_cache_for_tests() -> None:
+    """Clear cache storage for test isolation."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
 def sanitize_query(query: str) -> str:
-    """Sanitize user query to remove PII (names, phones, emails, addresses, distress cries)."""
+    """Sanitize user query to remove PII (names, phones, Aadhaar, emails, addresses, distress cries)."""
     text = query
 
-    # 1. Strip Indian phone numbers (+91, 10-12 digits)
-    text = re.sub(r"(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b", "", text)
+    # 1. Strip Indian Aadhaar numbers (12 digits, optional spaces or hyphens)
+    text = re.sub(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", "", text)
+
+    # 2. Strip Indian phone numbers (+91, 10-12 digits, leading 0)
+    text = re.sub(r"(?:\+?91[\s-]?)?0?[6-9]\d{4}[\s-]?\d{5}\b", "", text)
     text = re.sub(r"\b\d{10,12}\b", "", text)
 
-    # 2. Strip email addresses
+    # 3. Strip email addresses
     text = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "", text)
 
-    # 3. Strip contact/phone labels
-    text = re.sub(r"\b(?:my\s+)?(?:phone|mobile|cell|contact|number|call|whatsapp)\s*(?:is|at|:)?\b", "", text, flags=re.I)
+    # 4. Strip contact/phone/Aadhaar labels
+    text = re.sub(
+        r"\b(?:my\s+)?(?:phone|mobile|cell|contact|number|call|whatsapp|aadhaar|aadhar|uidai)\s*(?:is|at|:)?\b",
+        "",
+        text,
+        flags=re.I,
+    )
 
-    # 4. Strip specific address components (flat, plot, house no, street, colony)
+    # 5. Strip specific address components (flat, plot, house no, street, colony)
     text = re.sub(
         r"\b(?:flat|house|room|plot|apt|apartment|sector|phase|street|road|gali|lane|colony|nagar)\s*(?:no\.?|number)?\s*[\w\d/-]+",
         "",
@@ -98,23 +209,28 @@ def sanitize_query(query: str) -> str:
         flags=re.I,
     )
 
-    # 5. Normalize distress statements into legal topic searches
+    # 6. Normalize distress statements and Hindi distress cries into legal/shelter topic searches
     distress_replacements: list[tuple[str, str]] = [
         (r"\b(?:my\s+husband(?:\s+[A-Za-z]+)?|pati)\s+(?:beat|beats|beaten|abused|assaulted)\s+me\b", "domestic violence assault"),
+        (r"\b(?:mera\s+pati|mere\s+pati)\s+(?:mujhe\s+)?(?:maarta|peetta|gali\s+deta|torture\s+karta)\b", "domestic violence assault"),
         (r"\b(?:i\s+was|i\s+am)\s+(?:raped|sexually\s+assaulted|molested)\b", "sexual assault rape legal reporting"),
         (r"\b(?:my\s+in[- ]laws|sasural)\s+(?:harassing|torturing)\s+me\b", "in laws domestic harassment"),
+        (r"\b(?:sasural\s+wale|saas\s+sasur)\s+(?:mujhe\s+)?(?:pareshan|satate|maarte|torture)\b", "in laws domestic harassment"),
+        (r"\b(?:marpeet|maar\s+peet)\b", "domestic violence assault"),
         (r"\b(?:threatened|threatening)\s+to\s+kill\s+me\b", "criminal intimidation threat to life"),
         (r"\b(?:locked|confined)\s+me\s+in\s+a\s+room\b", "wrongful confinement domestic violence"),
+        (r"\b(?:mujhe\s+)?(?:ghar\s+se\s+nikal\s+diya|chhod\s+diya)\b", "abandoned kicked out shelter"),
         (r"\b(?:where\s+can\s+i\s+find|how\s+to\s+contact|how\s+do\s+i\s+contact|who\s+is\s+the)\b", ""),
         (r"\b(?:please\s+help\s+me|help\s+me|what\s+should\s+i\s+do|i\s+need\s+help|urgently|urgent)\b", ""),
+        (r"\b(?:bachao|bachaao|madad\s+karo|meri\s+madad\s+karo)\b", ""),
     ]
     for pattern, repl in distress_replacements:
         text = re.sub(pattern, repl, text, flags=re.I)
 
-    # 6. Strip specific names following relationship or identification words
+    # 7. Strip specific names following relationship or identification words
     text = re.sub(r"\b(?:husband|wife|father|brother|named|called|accused)\s+[A-Z][a-z]+\b", "", text)
 
-    # 7. Clean punctuation and multiple spaces
+    # 8. Clean punctuation and multiple spaces
     text = re.sub(r"[^\w\s-]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
@@ -207,6 +323,10 @@ def _fetch_from_serpapi(search_query: str, max_results: int = 3) -> list[SerpWeb
     if not api_key:
         return []
 
+    if is_circuit_open():
+        logger.warning("SerpAPI circuit breaker is open; skipping remote query to maintain 0ms response.")
+        return []
+
     params = {
         "engine": "google",
         "q": search_query,
@@ -229,6 +349,7 @@ def _fetch_from_serpapi(search_query: str, max_results: int = 3) -> list[SerpWeb
             )
             if resp.status_code != 200:
                 logger.warning("SerpAPI HTTP %d: %s", resp.status_code, resp.text[:200])
+                record_failure()
                 return []
             data = resp.json()
         except ImportError:
@@ -267,9 +388,11 @@ def _fetch_from_serpapi(search_query: str, max_results: int = 3) -> list[SerpWeb
             if len(results) >= max_results:
                 break
 
+        record_success()
         return results
 
     except Exception as exc:
+        record_failure()
         logger.warning("SerpAPI search failed gracefully: %s", exc)
         return []
 
@@ -284,26 +407,13 @@ def search_legal_web(query: str, max_results: int = 3) -> list[SerpWebResult]:
         return []
 
     cache_key = f"legal:{search_query.casefold()}"
-    now = time.time()
-
-    with _CACHE_LOCK:
-        if cache_key in _CACHE:
-            cached_time, cached_results = _CACHE[cache_key]
-            if now - cached_time < CACHE_TTL_SECONDS:
-                return cached_results
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     # Fetch live results
     results = _fetch_from_serpapi(search_query, max_results=max_results)
-
-    # Store in cache
-    with _CACHE_LOCK:
-        # Enforce max cache size
-        if len(_CACHE) > 500:
-            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t > CACHE_TTL_SECONDS]
-            for k in expired_keys:
-                _CACHE.pop(k, None)
-        _CACHE[cache_key] = (now, results)
-
+    _cache_put(cache_key, results)
     return results
 
 
@@ -378,23 +488,12 @@ def search_crisis_support_web(query: str, max_results: int = 2) -> list[SerpWebR
         return []
 
     cache_key = f"crisis:{search_query.casefold()}"
-    now = time.time()
-
-    with _CACHE_LOCK:
-        if cache_key in _CACHE:
-            cached_time, cached_results = _CACHE[cache_key]
-            if now - cached_time < CACHE_TTL_SECONDS:
-                return cached_results
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     results = _fetch_from_serpapi(search_query, max_results=max_results)
-
-    with _CACHE_LOCK:
-        if len(_CACHE) > 500:
-            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t > CACHE_TTL_SECONDS]
-            for k in expired_keys:
-                _CACHE.pop(k, None)
-        _CACHE[cache_key] = (now, results)
-
+    _cache_put(cache_key, results)
     return results
 
 
@@ -464,23 +563,12 @@ def search_health_facility_web(query: str, max_results: int = 2) -> list[SerpWeb
         return []
 
     cache_key = f"health:{search_query.casefold()}"
-    now = time.time()
-
-    with _CACHE_LOCK:
-        if cache_key in _CACHE:
-            cached_time, cached_results = _CACHE[cache_key]
-            if now - cached_time < CACHE_TTL_SECONDS:
-                return cached_results
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     results = _fetch_from_serpapi(search_query, max_results=max_results)
-
-    with _CACHE_LOCK:
-        if len(_CACHE) > 500:
-            expired_keys = [k for k, (t, _) in _CACHE.items() if now - t > CACHE_TTL_SECONDS]
-            for k in expired_keys:
-                _CACHE.pop(k, None)
-        _CACHE[cache_key] = (now, results)
-
+    _cache_put(cache_key, results)
     return results
 
 

@@ -7,9 +7,15 @@ from main import app
 from services.legal_search import LegalChunk, search_legal_chunks
 from services.serpapi_client import (
     SerpWebResult,
+    clear_cache_for_tests,
     formulate_legal_search_query,
+    get_serpapi_status,
+    is_circuit_open,
     is_legal_web_candidate,
     legal_web_results_to_chunks,
+    record_failure,
+    record_success,
+    reset_circuit_breaker_for_tests,
     sanitize_query,
     search_legal_web,
     serpapi_enabled,
@@ -19,6 +25,12 @@ from services.serpapi_client import (
 class SerpApiClientTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
+        reset_circuit_breaker_for_tests()
+        clear_cache_for_tests()
+
+    def tearDown(self):
+        reset_circuit_breaker_for_tests()
+        clear_cache_for_tests()
 
     def test_serpapi_enabled_detection(self):
         with patch.dict(os.environ, {"SERPAPI_API_KEY": "valid_key"}, clear=False):
@@ -264,6 +276,78 @@ class SerpApiClientTests(unittest.TestCase):
             call_prompt = gemini_mock.call_args.kwargs["prompt"]
             self.assertIn("janaushadhi.gov.in", call_prompt)
 
+    def test_sanitize_query_scrubs_aadhaar_and_hindi_distress(self):
+        raw = "Mera pati mujhe maarta hai bachao Indore me Aadhaar 4321 8765 2109"
+        sanitized = sanitize_query(raw)
+        self.assertNotIn("4321 8765 2109", sanitized)
+        self.assertNotIn("bachao", sanitized)
+        self.assertIn("Indore", sanitized)
+        self.assertIn("domestic violence assault", sanitized.lower())
+
+        raw2 = "Meri sasural wale pareshan karte hai Lucknow"
+        sanitized2 = sanitize_query(raw2)
+        self.assertIn("in laws domestic harassment", sanitized2.lower())
+        self.assertIn("Lucknow", sanitized2)
+
+    def test_circuit_breaker_trips_and_recovers(self):
+        self.assertFalse(is_circuit_open())
+        status = get_serpapi_status()
+        self.assertFalse(status["circuit_open"])
+        self.assertEqual(status["consecutive_failures"], 0)
+
+        # 1st failure
+        record_failure()
+        self.assertFalse(is_circuit_open())
+        # 2nd failure
+        record_failure()
+        self.assertFalse(is_circuit_open())
+        # 3rd failure - trips breaker!
+        record_failure()
+        self.assertTrue(is_circuit_open())
+        status_tripped = get_serpapi_status()
+        self.assertTrue(status_tripped["circuit_open"])
+        self.assertEqual(status_tripped["consecutive_failures"], 3)
+
+        # Recovery on success
+        record_success()
+        self.assertFalse(is_circuit_open())
+        status_recovered = get_serpapi_status()
+        self.assertFalse(status_recovered["circuit_open"])
+        self.assertEqual(status_recovered["consecutive_failures"], 0)
+
+    def test_circuit_breaker_blocks_fetch_when_open(self):
+        record_failure()
+        record_failure()
+        record_failure()
+        self.assertTrue(is_circuit_open())
+
+        with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}, clear=False):
+            from services.serpapi_client import _fetch_from_serpapi
+
+            results = _fetch_from_serpapi("DLSA Varanasi")
+            self.assertEqual(results, [])
+
+    def test_circuit_breaker_trips_on_network_errors(self):
+        with patch.dict(os.environ, {"SERPAPI_API_KEY": "test_key"}, clear=False), patch(
+            "requests.get", side_effect=Exception("Connection timed out")
+        ):
+            from services.serpapi_client import _fetch_from_serpapi
+
+            self.assertFalse(is_circuit_open())
+            _fetch_from_serpapi("test query 1")
+            _fetch_from_serpapi("test query 2")
+            _fetch_from_serpapi("test query 3")
+            self.assertTrue(is_circuit_open())
+
+    def test_cache_bounded_eviction(self):
+        from services.serpapi_client import MAX_CACHE_ENTRIES, _CACHE, _cache_put
+
+        clear_cache_for_tests()
+        for i in range(MAX_CACHE_ENTRIES + 20):
+            _cache_put(f"test_key_{i}", [SerpWebResult("title", "http://test", "snippet", "src")])
+        self.assertLessEqual(len(_CACHE), MAX_CACHE_ENTRIES)
+
 
 if __name__ == "__main__":
     unittest.main()
+
