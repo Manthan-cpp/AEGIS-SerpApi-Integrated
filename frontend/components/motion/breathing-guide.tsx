@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
+import { Wind, Play, Pause, X } from "lucide-react";
 
 type BreathingPhase = "inhale" | "hold" | "exhale" | "rest";
 
@@ -59,7 +60,9 @@ export function BreathingGuide({ onClose, variant = "inline" }: BreathingGuidePr
     <div className={`breathing-guide-card breathing-guide-${variant}`} role="region" aria-label="Interactive breathing sanctuary">
       <div className="breathing-guide-header">
         <div className="breathing-guide-title-row">
-          <span className="breathing-leaf-icon" aria-hidden="true">❦</span>
+          <span className="breathing-leaf-icon" aria-hidden="true">
+            <Wind size={20} />
+          </span>
           <div>
             <h3 className="breathing-guide-heading">Calm Breathing Sanctuary</h3>
             <p className="breathing-guide-subheading">4-4-6 grounding rhythm · cycle {cyclesCompleted + 1}</p>
@@ -71,8 +74,17 @@ export function BreathingGuide({ onClose, variant = "inline" }: BreathingGuidePr
             className="breathing-toggle-btn"
             onClick={() => setIsActive(!isActive)}
             aria-label={isActive ? "Pause breathing exercise" : "Resume breathing exercise"}
+            style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
           >
-            {isActive ? "Pause" : "Resume"}
+            {isActive ? (
+              <>
+                <Pause size={12} /> Pause
+              </>
+            ) : (
+              <>
+                <Play size={12} /> Resume
+              </>
+            )}
           </button>
           {onClose && (
             <button
@@ -81,7 +93,7 @@ export function BreathingGuide({ onClose, variant = "inline" }: BreathingGuidePr
               onClick={onClose}
               aria-label="Close breathing guide"
             >
-              ✕
+              <X size={14} />
             </button>
           )}
         </div>

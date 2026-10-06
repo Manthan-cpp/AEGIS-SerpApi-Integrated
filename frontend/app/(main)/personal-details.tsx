@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Save, Check } from "lucide-react";
 
 export function PersonalDetailsForm() {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -124,15 +125,23 @@ export function PersonalDetailsForm() {
         <button 
           type="submit" 
           className="sos-primary-button" 
-          style={{ width: "100%", padding: "12px 16px", marginTop: "10px" }}
+          style={{ width: "100%", padding: "12px 16px", marginTop: "10px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
           disabled={saveStatus === "saving"}
         >
-          {saveStatus === "saving" ? "Saving..." : "Save Details"}
+          {saveStatus === "saving" ? (
+            "Saving..."
+          ) : (
+            <>
+              <Save size={14} aria-hidden="true" />
+              <span>Save Details</span>
+            </>
+          )}
         </button>
 
         {saveStatus === "success" && (
-          <div className="sos-success" role="alert">
-            <strong>Saved securely.</strong> Your details have been stored on this device.
+          <div className="sos-success" role="alert" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <Check size={14} aria-hidden="true" />
+            <span><strong>Saved securely.</strong> Your details have been stored on this device.</span>
           </div>
         )}
       </form>
