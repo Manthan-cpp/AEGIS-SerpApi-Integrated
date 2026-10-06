@@ -15,17 +15,19 @@ export function PersonalDetailsForm() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "success">("idle");
 
   useEffect(() => {
-    // Load from localStorage on mount
-    const stored = localStorage.getItem("aegis-personal-details");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setFormData((prev) => ({ ...prev, ...parsed }));
-      } catch (e) {
-        console.error("Failed to parse personal details from localStorage");
+    const frame = window.requestAnimationFrame(() => {
+      const stored = localStorage.getItem("aegis-personal-details");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setFormData((prev) => ({ ...prev, ...parsed }));
+        } catch {
+          console.error("Failed to parse personal details from localStorage");
+        }
       }
-    }
-    setIsLoaded(true);
+      setIsLoaded(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
