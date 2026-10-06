@@ -32,6 +32,13 @@ const starterMessage: ChatMessage = {
   text: "Ask me directly about your body, sex, periods, contraception, pregnancy, symptoms, or anything intimate. I’ll answer plainly and without judgment.",
 };
 
+const healthQuickQuestions = [
+  "Are emergency contraceptives safe to take?",
+  "How to find nearest Jan Aushadhi Kendra?",
+  "What helps with extreme menstrual cramps?",
+  "Private STI testing options in India",
+];
+
 function newMessageId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -135,6 +142,21 @@ export default function HealthFlow({ onBack }: HealthFlowProps) {
             </div>
           )}
         </div>
+
+        {messages.length === 1 && (
+          <div className="question-chips-container" aria-label="Suggested health questions">
+            {healthQuickQuestions.map((q) => (
+              <button
+                type="button"
+                className="question-chip-pill"
+                key={q}
+                onClick={() => setDraft(q)}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form className="health-composer" onSubmit={sendMessage}>
           <label className="sr-only" htmlFor="health-message">Ask Aegis Health</label>

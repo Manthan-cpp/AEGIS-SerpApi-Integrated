@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import LiveCompanionVoice from "./live-companion-voice";
+import { BreathingGuide } from "../../components/motion/breathing-guide";
 
 type CompanionFlowProps = {
   onBack: () => void;
@@ -124,6 +125,7 @@ export default function CompanionFlow({ onBack }: CompanionFlowProps) {
   const [urgentMessage, setUrgentMessage] = useState<string | null>(null);
   const [isSummaryGenerating, setIsSummaryGenerating] = useState(false);
   const [isSummaryCopied, setIsSummaryCopied] = useState(false);
+  const [showBreathing, setShowBreathing] = useState(false);
   const sessionId = useRef("");
   const messageList = useRef<HTMLDivElement>(null);
 
@@ -324,6 +326,14 @@ export default function CompanionFlow({ onBack }: CompanionFlowProps) {
             <p className="companion-voice-hint">You can also talk with Aegis live.</p>
           </div>
           <div className="companion-panel-actions">
+            <button
+              className="listen-button"
+              type="button"
+              onClick={() => setShowBreathing((s) => !s)}
+              aria-label={showBreathing ? "Hide breathing guide" : "Open breathing guide"}
+            >
+              ❦ Breathe
+            </button>
             <button className="live-companion-launch" type="button" onClick={() => setIsVoiceOpen(true)} disabled={isVoiceOpen}>
               Start live voice
             </button>
@@ -333,10 +343,21 @@ export default function CompanionFlow({ onBack }: CompanionFlowProps) {
               onClick={() => (isSpeaking ? stopSpeaking() : lastAssistantMessage && speak(lastAssistantMessage.text))}
               disabled={!lastAssistantMessage}
             >
-              {isSpeaking ? "Stop reading" : "Read aloud"}
+              {isSpeaking ? (
+                <>
+                  Stop reading
+                  <span className="reading-waveform" aria-hidden="true"><span /><span /><span /></span>
+                </>
+              ) : (
+                "Read aloud"
+              )}
             </button>
           </div>
         </div>
+
+        {showBreathing && (
+          <BreathingGuide onClose={() => setShowBreathing(false)} variant="floating" />
+        )}
 
         {isVoiceOpen && (
           <LiveCompanionVoice chatSummary={buildVoiceContext(messages)} onClose={() => setIsVoiceOpen(false)} />

@@ -127,6 +127,8 @@ const quickQuestions = [
   "What can a protection order do?",
   "What counts as domestic violence?",
   "How can I access free legal aid?",
+  "What is wrongful confinement under BNS?",
+  "How do I file a Zero FIR?",
 ];
 
 function newMessageId() {

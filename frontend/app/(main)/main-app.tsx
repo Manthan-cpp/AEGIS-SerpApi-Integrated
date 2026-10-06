@@ -12,7 +12,8 @@ import SosFlow from "./sos-flow";
 import TrustedCallerFlow from "./trusted-caller-flow";
 import DirectMessagesFlow from "./direct-messages-flow";
 import MotionProvider from "../../components/motion/motion-provider";
-import { TextReveal } from "../../components/motion/reveal";
+import { WordReveal } from "../../components/motion/reveal";
+import { BreathingGuide } from "../../components/motion/breathing-guide";
 
 type MainAppProps = {
   onPanicExit: () => void;
@@ -35,6 +36,7 @@ export default function MainApp({ onPanicExit }: MainAppProps) {
   const [activeTool, setActiveTool] = useState<ToolId>("home");
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<NavGroup>(null);
+  const [showBreathing, setShowBreathing] = useState(false);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
@@ -157,10 +159,11 @@ export default function MainApp({ onPanicExit }: MainAppProps) {
               <section className="landing-hero" aria-labelledby="landing-title">
                 <div className="landing-hero-copy" data-motion-intro id="landing-title">
                   <p className="eyebrow">A private place to begin again</p>
-                  <TextReveal as="h2" className="aegis-hero-title">When the world feels unsafe,<br /><em>you still deserve a quiet place.</em></TextReveal>
+                  <WordReveal as="h2" className="aegis-hero-title" text="When the world feels unsafe, you still deserve a quiet place." />
                   <p className="landing-hero-lede">Aegis brings calm conversation, clear rights information, and discreet ways to reach someone you trust into one gentle space.</p>
                   <div className="landing-hero-actions">
                     <button className="landing-primary-button" type="button" onClick={() => goTo("companion")}>Start with support <span aria-hidden="true">→</span></button>
+                    <button className="landing-secondary-button" type="button" onClick={() => setShowBreathing(true)}><span className="breathing-pill-dot" /> Follow breathing guide ❦</button>
                   </div>
                 </div>
                 <div className="landing-hero-art" aria-label="A calm Aegis presence">
@@ -192,9 +195,10 @@ export default function MainApp({ onPanicExit }: MainAppProps) {
                 <div className="landing-feature-list">
                   <button className="landing-feature-row" type="button" onClick={() => goTo("companion")}><span>01</span><strong>Emotional support</strong><p>A natural conversation when you need someone to listen.</p><b aria-hidden="true">↗</b></button>
                   <button className="landing-feature-row" type="button" onClick={() => goTo("legal")}><span>02</span><strong>Legal clarity</strong><p>India-scoped answers grounded in official sources and sections.</p><b aria-hidden="true">↗</b></button>
-                  <button className="landing-feature-row" type="button" onClick={() => goTo("sos")}><span>03</span><strong>Discreet SOS</strong><p>A hidden message inside an ordinary-looking image.</p><b aria-hidden="true">↗</b></button>
-                  <button className="landing-feature-row" type="button" onClick={() => goTo("caller")}><span>04</span><strong>Trusted connection</strong><p>Reach someone through a live voice bridge or queued help email.</p><b aria-hidden="true">↗</b></button>
-                  <button className="landing-feature-row" type="button" onClick={() => goTo("messages")}><span>05</span><strong>Private messages</strong><p>A quiet line to another signed-in Aegis user, with history preserved.</p><b aria-hidden="true">↗</b></button>
+                  <button className="landing-feature-row" type="button" onClick={() => goTo("health")}><span>03</span><strong>Health guidance</strong><p>Private, judgment-free answers for intimate health questions.</p><b aria-hidden="true">↗</b></button>
+                  <button className="landing-feature-row" type="button" onClick={() => goTo("sos")}><span>04</span><strong>Discreet SOS</strong><p>A hidden message inside an ordinary-looking image.</p><b aria-hidden="true">↗</b></button>
+                  <button className="landing-feature-row" type="button" onClick={() => goTo("caller")}><span>05</span><strong>Trusted connection</strong><p>Reach someone through a live voice bridge or queued help email.</p><b aria-hidden="true">↗</b></button>
+                  <button className="landing-feature-row" type="button" onClick={() => goTo("messages")}><span>06</span><strong>Private messages</strong><p>A quiet line to another signed-in Aegis user, with history preserved.</p><b aria-hidden="true">↗</b></button>
                 </div>
               </section>
 
@@ -206,6 +210,12 @@ export default function MainApp({ onPanicExit }: MainAppProps) {
             </div>
           )}
         </section>
+
+        {showBreathing && (
+          <div className="aegis-breathing-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowBreathing(false); }}>
+            <BreathingGuide onClose={() => setShowBreathing(false)} variant="inline" />
+          </div>
+        )}
       </main>
     </MotionProvider>
   );
