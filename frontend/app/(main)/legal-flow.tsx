@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, type ReactNode } from "react";
 
 type LegalFlowProps = {
   onBack: () => void;
@@ -20,9 +20,88 @@ type LegalResponse = {
   answer_source: string;
   in_scope: boolean;
   citations: Citation[];
-  retrieval_source: "atlas-vector" | "local-cosine" | "local-corpus" | "not-configured";
+  retrieval_source: "atlas-vector" | "local-cosine" | "local-corpus" | "not-configured" | "serpapi-web" | "hybrid-serpapi-corpus";
   warning: string | null;
 };
+
+function renderInlineContent(content: string, keyPrefix: string): ReactNode {
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|\[Source\s+\d+\])/g;
+  const parts = content.split(regex);
+
+  return parts.map((part, index) => {
+    if (!part) return null;
+    if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+      return <strong key={`${keyPrefix}-b-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length >= 2) {
+      return <em key={`${keyPrefix}-i-${index}`}>{part.slice(1, -1)}</em>;
+    }
+    if (/^\[Source\s+\d+\]$/i.test(part)) {
+      return (
+        <span className="legal-citation-badge" key={`${keyPrefix}-src-${index}`}>
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
+}
+
+function renderFormattedLegalText(text: string): ReactNode {
+  const normalized = text
+    .replace(/(?<=\S)\s+([*•\-]\s+\*\*)/g, "\n\n$1")
+    .replace(/(?<=\S)\s+([*•\-]\s+[A-Za-z])/g, "\n\n$1");
+
+  const lines = normalized.split("\n");
+  const elements: ReactNode[] = [];
+  let currentList: string[] = [];
+
+  const flushList = () => {
+    if (currentList.length > 0) {
+      const listItems = [...currentList];
+      currentList = [];
+      const listKey = `list-${elements.length}`;
+      elements.push(
+        <ul className="legal-chat-list" key={listKey}>
+          {listItems.map((item, idx) => (
+            <li key={`${listKey}-li-${idx}`}>
+              {renderInlineContent(item, `${listKey}-li-${idx}`)}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i].trim();
+    if (!rawLine) {
+      flushList();
+      continue;
+    }
+
+    const bulletMatch = rawLine.match(/^([*•\-]|(?:\d+[.)]))\s+(.*)$/);
+    if (bulletMatch) {
+      currentList.push(bulletMatch[2]);
+    } else {
+      flushList();
+      const pKey = `p-${elements.length}`;
+      elements.push(
+        <p key={pKey}>
+          {renderInlineContent(rawLine, pKey)}
+        </p>
+      );
+    }
+  }
+
+  flushList();
+
+  if (elements.length === 0) {
+    return <p>{text}</p>;
+  }
+
+  return <div className="legal-chat-formatted-body">{elements}</div>;
+}
 
 type LegalMessage = {
   id: string;
@@ -125,7 +204,7 @@ export default function LegalFlow({ onBack }: LegalFlowProps) {
             <div className={`chat-row chat-row-${message.role}`} key={message.id}>
               {message.role === "assistant" && <span className="chat-avatar legal-chat-avatar" aria-hidden="true">§</span>}
               <div className={`chat-bubble chat-bubble-${message.role} legal-chat-bubble`}>
-                <p>{message.text}</p>
+                {message.role === "assistant" ? renderFormattedLegalText(message.text) : <p>{message.text}</p>}
                 {message.response && (
                   <>
                     <span className={`legal-inline-status ${message.response.in_scope ? "is-grounded" : "is-limited"}`}>

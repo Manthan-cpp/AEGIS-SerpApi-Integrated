@@ -2038,6 +2038,65 @@ button:focus-visible {
   white-space: pre-wrap;
 }
 
+.legal-chat-formatted-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.legal-chat-formatted-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.68;
+  color: #3e4b5f;
+  white-space: pre-wrap;
+}
+
+.legal-chat-list {
+  margin: 4px 0 6px 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.legal-chat-list li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.68;
+  color: #3e4b5f;
+}
+
+.legal-chat-list li::before {
+  content: "•";
+  position: absolute;
+  left: 6px;
+  top: 0;
+  color: #9c6c42;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.legal-chat-bubble strong {
+  font-weight: 650;
+  color: #1f2d42;
+}
+
+.legal-citation-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  margin: 0 3px;
+  border-radius: 4px;
+  background: rgba(99, 124, 169, 0.12);
+  color: #37537e;
+  vertical-align: baseline;
+  letter-spacing: 0.02em;
+}
+
 .legal-inline-status {
   display: inline-block;
   margin-top: 10px;

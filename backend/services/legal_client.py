@@ -253,7 +253,19 @@ def generate_legal_answer(
     )
 
     def interpret_answer(raw_answer: str, provider: str) -> LegalAnswer | None:
-        answer = " ".join(raw_answer.split()).strip()
+        raw = raw_answer.strip()
+        # Separate inline bullets if they were emitted on the same line
+        raw = re.sub(r"(?<=\S)\s+([*•\-]\s+\*\*)", r"\n\n\1", raw)
+        raw = re.sub(r"(?<=\S)\s+([*•\-]\s+[A-Za-z])", r"\n\n\1", raw)
+        # Normalize whitespace while preserving paragraphs and linebreaks
+        cleaned_lines: list[str] = []
+        for line in raw.splitlines():
+            line_str = " ".join(line.split()).strip()
+            if line_str:
+                cleaned_lines.append(line_str)
+            elif cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+        answer = "\n".join(cleaned_lines).strip()
         refusal_phrases = (
             "i can't help", "i cannot help", "i can't answer", "i cannot answer",
             "unable to answer", "not able to answer", "outside my scope",
