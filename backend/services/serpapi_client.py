@@ -218,7 +218,7 @@ def sanitize_query(query: str) -> str:
         (r"\b(?:sasural\s+wale|saas\s+sasur)\s+(?:mujhe\s+)?(?:pareshan|satate|maarte|torture)\b", "in laws domestic harassment"),
         (r"\b(?:marpeet|maar\s+peet)\b", "domestic violence assault"),
         (r"\b(?:threatened|threatening)\s+to\s+kill\s+me\b", "criminal intimidation threat to life"),
-        (r"\b(?:locked|confined)\s+me\s+in\s+a\s+room\b", "wrongful confinement domestic violence"),
+        (r"\b(?:am\s+being\s+confined|being\s+confined|locked|confined)(?:\s+me)?\s+in\s+a\s+room\b", "wrongful confinement domestic violence"),
         (r"\b(?:mujhe\s+)?(?:ghar\s+se\s+nikal\s+diya|chhod\s+diya)\b", "abandoned kicked out shelter"),
         (r"\b(?:where\s+can\s+i\s+find|how\s+to\s+contact|how\s+do\s+i\s+contact|who\s+is\s+the)\b", ""),
         (r"\b(?:please\s+help\s+me|help\s+me|what\s+should\s+i\s+do|i\s+need\s+help|urgently|urgent)\b", ""),
@@ -256,7 +256,11 @@ def is_legal_web_candidate(query: str) -> bool:
 
     # Geographic / District keywords combined with help/legal words
     has_location = any(re.search(rf"\b{re.escape(loc)}\b", lowered) for loc in INDIAN_LOCATIONS)
-    has_legal_or_help = bool(re.search(r"\b(?:court|legal|lawyer|aid|police|officer|complaint|helpline|centre|center|station)\b", lowered))
+    has_legal_or_help = bool(re.search(
+        r"\b(?:court|legal|lawyer|aid|police|officer|complaint|helpline|centre|center|station|"
+        r"justice|fir|report|rights|confin\w*|locked|shelter|abuse|action|escape)\b",
+        lowered,
+    ))
 
     return has_location and has_legal_or_help
 
@@ -280,6 +284,8 @@ def formulate_legal_search_query(query: str) -> str:
     if found_inst:
         return f"{inst_str} India official legal portal"
     if found_locations:
+        if not found_inst and re.search(r"\b(?:justice|police|fir|confin\w*|locked|escape|abuse|beaten)\b", lowered):
+            return f"District Legal Services Authority DLSA police legal aid {loc_str} official portal contact India"
         # Strip generic stopwords
         cleaned = re.sub(r"\b(?:i|me|my|we|us|he|she|they|am|is|are|was|were|want|please|tell)\b", "", sanitized, flags=re.I)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
